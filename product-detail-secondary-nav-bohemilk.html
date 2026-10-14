@@ -93207,6 +93207,10 @@ article[data-tid='product-detail'] .tw-font-ds-stronger { font-weight: 650; }
 /* Gallery with a miniatures column: the product tags sit on the large image,
    left of the 120px miniatures column and its 8px gap. */
 .product-detail-gallery:has(.product-detail-gallery__thumbnails) ~ .tw-absolute.tw-top-2.tw-right-2 { right: calc(120px + 8px + 0.5rem); }
+/* Mobile scroll header (Figma ".header scroll"): 32px CTA / amount controls, price
+   flush right above them. */
+.pd-mobile-scroll-header__buy .tw-h-10 { height: 2rem; }
+.pd-mobile-scroll-header__buy .tw-mr-2 { margin-right: 0; }
 /* Scrolling tab sections (Popis produktu, Složení, Podobné produkty, …): no
    dividers between them, 32px apart — the stack's 16px gap + 16px here. */
 .product-detail-b-tab-section ~ section { margin-top: 1rem; }
@@ -97684,10 +97688,12 @@ article[data-tid='product-detail'] .tw-font-ds-stronger { font-weight: 650; }
 
     template: `
       <div class="product-detail-gallery tw-flex tw-gap-2">
-        <!-- Mobile, multiple photos: one photo at a time, swipe or arrow buttons. -->
+        <!-- Mobile, multiple photos: one photo at a time, swiped; the slide
+             indicator under the photo shows the position. -->
         <ds-carousel
           v-if="hasThumbnails && isMobileGallery"
           :step="1"
+          show-slide-indicator
           class="tw-w-full"
           data-tid="product-detail__product-image-carousel">
           <ds-carousel-content class="tw-rounded-xl">
@@ -97727,30 +97733,10 @@ article[data-tid='product-detail'] .tw-font-ds-stronger { font-weight: 650; }
             </ds-carousel-item>
           </ds-carousel-content>
 
-          <!-- DS nav buttons hide on touch devices; these always show (only while
-               there is a photo to move to). Same tertiary circle as the lightbox. -->
-          <template #controls="{ next, previous, canGoNext, canGoPrevious }">
-            <ds-icon-button
-              v-show="canGoPrevious.value"
-              variant="tertiary"
-              shape="circle"
-              class="tw-absolute tw-left-2 tw-top-1/2 tw-z-[1] -tw-translate-y-1/2"
-              data-tid="product-detail__product-image-prev"
-              :aria-label="t('productDetail.gallery.previousPhoto')"
-              @click="previous">
-              <icon-chevron-left-solid></icon-chevron-left-solid>
-            </ds-icon-button>
-            <ds-icon-button
-              v-show="canGoNext.value"
-              variant="tertiary"
-              shape="circle"
-              class="tw-absolute tw-right-2 tw-top-1/2 tw-z-[1] -tw-translate-y-1/2"
-              data-tid="product-detail__product-image-next"
-              :aria-label="t('productDetail.gallery.nextPhoto')"
-              @click="next">
-              <icon-chevron-right-solid></icon-chevron-right-solid>
-            </ds-icon-button>
-          </template>
+          <!-- Design change: no arrow buttons over the photo (not even the DS
+               defaults) — only the slide indicator under it. An empty slot would
+               fall back to the DS buttons, hence the hidden placeholder. -->
+          <template #controls><span hidden></span></template>
         </ds-carousel>
 
         <!-- Multiple photos: the large image keeps the full height and the photos
@@ -98050,19 +98036,87 @@ article[data-tid='product-detail'] .tw-font-ds-stronger { font-weight: 650; }
   // ---------------------------------------------------------------------------
   // DetailB components/ProductDetailMobileModalHeader.vue
   // ---------------------------------------------------------------------------
+  // PROTOTYPE design change (Figma 7456:245229 ".header scroll"): once the price
+  // box scrolls out of view, the mobile header swaps the breadcrumbs for a product
+  // row — photo, name (max 3 lines, shortened first), price (never wraps, original
+  // price left of a discounted one) above the main CTA / in-cart amount — 8px gaps.
+  const MOBILE_SCROLL_HEADER_IMAGE_WIDTH_PX = 64
+  const MOBILE_SCROLL_HEADER_IMAGE_HEIGHT_PX = 80
+
   const ProductDetailMobileModalHeader = {
     components: {
       'product-detail-mobile-breadcrumbs': ProductDetailMobileBreadcrumbs,
+      'product-amount': ProductAmount,
+      'product-detail-price': ProductDetailPrice,
     },
     props: {
       breadcrumbs: { type: Array, required: true },
+      product: { type: Object, default: null },
+      hasMatchingVendorId: { type: Boolean, default: true },
+      unlisted: { type: Boolean, default: false },
+      replaceable: { type: Boolean, default: false },
     },
-    emits: ['close', 'breadcrumb-click'],
+    emits: ['close', 'breadcrumb-click', 'replace'],
 
     setup(props, { emit }) {
+      const headerRef = ref(null)
+      const expanded = ref(false)
+
+      const productImageKey = computed(() => {
+        const origin = props.product?.origin
+        return origin?.detail?.photos?.[0] ?? origin?.image
+      })
+      const productImageSrc = computed(() =>
+        productImageKey.value
+          ? resizer(productImageKey.value, MOBILE_SCROLL_HEADER_IMAGE_WIDTH_PX, MOBILE_SCROLL_HEADER_IMAGE_HEIGHT_PX)
+          : '',
+      )
+      const productImageSrcSet = computed(() =>
+        productImageKey.value
+          ? `${resizer(productImageKey.value, MOBILE_SCROLL_HEADER_IMAGE_WIDTH_PX * 2, MOBILE_SCROLL_HEADER_IMAGE_HEIGHT_PX * 2)} 1.5x, ${productImageSrc.value} 1x`
+          : '',
+      )
+
+      let scrollRoot = null
+      function findScrollRoot() {
+        return headerRef.value?.closest('article')?.querySelector('.product-detail-b-modal-scroll') ?? null
+      }
+      function findPriceBox() {
+        return (
+          headerRef.value
+            ?.closest('article')
+            ?.querySelector('[data-tid="product-detail__overlay_price"]')?.parentElement ?? null
+        )
+      }
+
+      function syncExpanded() {
+        if (!props.product || !scrollRoot) return
+        const priceBox = findPriceBox()
+        if (!priceBox) return
+        const next = priceBox.getBoundingClientRect().bottom < scrollRoot.getBoundingClientRect().top
+        if (next === expanded.value) return
+        // the header sits above the scroll body: keep the content in place when it
+        // changes height
+        const before = headerRef.value.offsetHeight
+        expanded.value = next
+        Vue.nextTick(() => {
+          if (scrollRoot && headerRef.value) scrollRoot.scrollTop += headerRef.value.offsetHeight - before
+        })
+      }
+
+      Vue.onMounted(() => {
+        scrollRoot = findScrollRoot()
+        scrollRoot?.addEventListener('scroll', syncExpanded, { passive: true })
+      })
+      Vue.onBeforeUnmount(() => scrollRoot?.removeEventListener('scroll', syncExpanded))
+
       return {
         t,
         emit,
+        headerRef,
+        expanded,
+        productImageSrc,
+        productImageSrcSet,
         productDetailModalMobileHeaderClass,
         productDetailMobileBreadcrumbTriggerClass,
       }
@@ -98070,9 +98124,47 @@ article[data-tid='product-detail'] .tw-font-ds-stronger { font-weight: 650; }
 
     template: `
       <header
+        ref="headerRef"
         :class="productDetailModalMobileHeaderClass"
+        :data-expanded="expanded"
         data-tid="product-detail-mobile-modal-header">
+        <div
+          v-if="expanded && product"
+          class="tw-flex tw-min-w-0 tw-flex-1 tw-items-center tw-gap-2"
+          data-tid="product-detail-mobile-modal-header__product">
+          <div class="tw-h-20 tw-w-16 tw-shrink-0 tw-overflow-hidden tw-rounded-lg tw-bg-[#F3F3F3]">
+            <img
+              :src="productImageSrc"
+              :srcset="productImageSrcSet"
+              :alt="product.origin.name"
+              class="tw-size-full tw-object-contain tw-object-center tw-mix-blend-multiply" />
+          </div>
+          <p
+            class="tw-m-0 tw-min-w-0 tw-flex-1 tw-overflow-hidden tw-text-ellipsis tw-text-[14px] tw-font-medium tw-leading-[18px] tw-text-ds-paragraph [-webkit-box-orient:vertical] [-webkit-line-clamp:3] [display:-webkit-box]">
+            {{ product.origin.name }}
+          </p>
+          <div class="pd-mobile-scroll-header__buy tw-flex tw-shrink-0 tw-flex-col tw-items-end tw-gap-2">
+            <div v-if="!unlisted" class="tw-whitespace-nowrap">
+              <product-detail-price
+                :product="product"
+                :split-cents="false"
+                :classes="{
+                  mainPart: 'tw-text-style-lg tw-leading-5',
+                  strikePrice: 'tw-text-style-sm tw-leading-4',
+                }"></product-detail-price>
+            </div>
+            <product-amount
+              :product="product"
+              :has-matching-vendor-id="hasMatchingVendorId"
+              :unlisted="unlisted"
+              :replaceable="replaceable"
+              product-detail
+              size="md"
+              @replace="emit('replace')"></product-amount>
+          </div>
+        </div>
         <product-detail-mobile-breadcrumbs
+          v-else
           :items="breadcrumbs"
           class="tw-min-w-0 tw-flex-1"
           @click="emit('breadcrumb-click')"></product-detail-mobile-breadcrumbs>
@@ -101505,8 +101597,13 @@ article[data-tid='product-detail'] .tw-font-ds-stronger { font-weight: 650; }
         <product-detail-mobile-modal-header
           v-if="isMobileModal && !productNotFound && getBreadcrumbs.length"
           :breadcrumbs="getBreadcrumbs"
+          :product="productRef"
+          :has-matching-vendor-id="hasMatchingVendorId"
+          :unlisted="productDetail?.unlisted"
+          :replaceable="hasBaseVendor"
           @breadcrumb-click="handleActiveRouteLink"
-          @close="closeModal"></product-detail-mobile-modal-header>
+          @close="closeModal"
+          @replace="handleScrollToReplacements"></product-detail-mobile-modal-header>
         <div
           v-else-if="isMobileModal && !productNotFound"
           :class="productDetailModalMobileHeaderClass">
