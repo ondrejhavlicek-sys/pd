@@ -99601,9 +99601,16 @@ article[data-tid='product-detail'] .tw-font-ds-stronger { font-weight: 650; }
 
       // PROTOTYPE: the switcher variant decides the layout (see window.PD_NAV)
       const navVariant = computed(() => window.PD_NAV.variant)
+      // Design change: mobile (< 992px) keeps the accordions in both variants;
+      // the "Nové záložky" tabs are desktop only.
+      const mobileTabsQuery = window.matchMedia('(max-width: 991px)')
+      const isMobileTabsLayout = ref(mobileTabsQuery.matches)
+      const syncMobileTabsLayout = (event) => (isMobileTabsLayout.value = event.matches)
+      Vue.onMounted(() => mobileTabsQuery.addEventListener('change', syncMobileTabsLayout))
+      Vue.onBeforeUnmount(() => mobileTabsQuery.removeEventListener('change', syncMobileTabsLayout))
       const useDesktopTabNav = computed(() => {
         if (navVariant.value === 'original') return props.useDesktopTabNav ?? !props.isModalDesktop
-        return true
+        return !isMobileTabsLayout.value
       })
 
       const TAB_NAMES = {
@@ -100149,7 +100156,7 @@ article[data-tid='product-detail'] .tw-font-ds-stronger { font-weight: 650; }
           </div>
         </section>
 
-        <product-detail-discovery embedded></product-detail-discovery>
+        <!-- Design change: no "Objevte také" (product-detail-discovery) section. -->
 
         <categories-list
           v-if="props.categoryTree?.length"
